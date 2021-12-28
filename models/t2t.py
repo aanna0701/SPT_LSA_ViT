@@ -10,10 +10,11 @@ import torch
 import torch.nn as nn
 from torch import einsum
 
-from timm.models.helpers import load_pretrained
-from timm.models.registry import register_model
 from timm.models.layers import trunc_normal_
 import numpy as np
+
+from einops.layers.torch import Rearrange
+import math
 
 """
 Take the standard Transformer as T2T Transformer
@@ -73,11 +74,11 @@ class Attention(nn.Module):
 class Block(nn.Module):
 
     def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
-                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, num_patches=0):
+                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, num_patches=0, is_LSA=False):
         super().__init__()
         self.norm1 = norm_layer(dim)
         self.attn = Attention(
-            dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, num_patches=num_patches)
+            dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, num_patches=num_patches,is_LSA=is_LSA)
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
@@ -102,22 +103,24 @@ def get_sinusoid_encoding(n_position, d_hid):
     return torch.FloatTensor(sinusoid_table).unsqueeze(0)
 
 class Attention(nn.Module):
-    def __init__(self, dim, num_heads=8, in_dim = 256, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0., num_patches=0):
+    def __init__(self, dim, num_heads=8, in_dim = 256, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0., num_patches=0, is_LSA=False):
         super().__init__()
         self.num_heads = num_heads
         self.in_dim = in_dim
         head_dim = dim // num_heads
         self.scale = qk_scale or head_dim ** -0.5        
-        self.scale = nn.Parameter(self.scale*torch.ones(num_heads))
-
+        
         self.qkv = nn.Linear(dim, in_dim * 3, bias=qkv_bias)
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(in_dim, in_dim)
         self.proj_drop = nn.Dropout(proj_drop)
         
-        self.mask = torch.eye(num_patches, num_patches)
-        self.mask = torch.nonzero((self.mask == 1), as_tuple=False)
-        self.inf = float('-inf')
+        self.is_LSA = is_LSA
+        if self.is_LSA:
+            self.mask = torch.eye(num_patches, num_patches)
+            self.mask = torch.nonzero((self.mask == 1), as_tuple=False)
+            self.inf = float('-inf')
+            self.scale = nn.Parameter(self.scale*torch.ones(num_heads))
 
     def forward(self, x):
         B, N, C = x.shape
@@ -126,15 +129,14 @@ class Attention(nn.Module):
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.in_dim // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
 
-        # attn = (q * self.scale) @ k.transpose(-2, -1)
+        if not self.is_LSA:
+            attn = (q * self.scale) @ k.transpose(-2, -1)
         
-        """ LMSA """
-        ############################
-        scale = self.scale
-        attn = torch.mul(einsum('b h i d, b h j d -> b h i j', q, k), scale.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).expand((B, self.num_heads, 1, 1)))
-    
-        attn[:, :, self.mask[:, 0], self.mask[:, 1]] = self.inf
-        ############################
+        else:
+            scale = self.scale
+            attn = torch.mul(einsum('b h i d, b h j d -> b h i j', q, k), scale.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).expand((B, self.num_heads, 1, 1)))
+        
+            attn[:, :, self.mask[:, 0], self.mask[:, 1]] = self.inf
         
         
         attn = attn.softmax(dim=-1)
@@ -152,11 +154,12 @@ class Attention(nn.Module):
 class Token_transformer(nn.Module):
 
     def __init__(self, dim, in_dim, num_heads, mlp_ratio=1., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
-                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, num_patches=0):
+                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, num_patches=0, is_LSA=False):
         super().__init__()
         self.norm1 = norm_layer(dim)
         self.attn = Attention(
-            dim, in_dim=in_dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, num_patches=num_patches)
+            dim, in_dim=in_dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop,
+            num_patches=num_patches, is_LSA=is_LSA)
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(in_dim)
         self.mlp = Mlp(in_features=in_dim, hidden_features=int(in_dim*mlp_ratio), out_features=in_dim, act_layer=act_layer, drop=drop)
@@ -194,144 +197,80 @@ class T2T_module(nn.Module):
     """
     Tokens-to-Token encoding module
     """
-    def __init__(self, img_size=224, in_chans=3, embed_dim=768, token_dim=64):
+    def __init__(self, img_size=224, in_chans=3, embed_dim=768, token_dim=64, is_LSA=False, is_SPT=False):
         super().__init__()
         
         print('adopt transformer encoder for tokens-to-token')
-        if img_size > 64:
-            """ SPM """
-            ############################
-            # self.soft_split0 = ShiftedPatchMerging(in_chans, token_dim, 4)
-            # self.soft_split1 = ShiftedPatchMerging(token_dim, token_dim)
-            # self.soft_split2 = ShiftedPatchMerging(token_dim, embed_dim)
-            ############################
+        
+        self.is_SPT = is_SPT
+        in_chans = in_chans*5 if is_SPT else in_chans
+        if img_size == 64:
             
-            """ BASE """
-            ############################
-            self.soft_split0 = nn.Unfold(kernel_size=(7, 7), stride=(4, 4), padding=(2, 2))
-            self.soft_split1 = nn.Unfold(kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
-            self.soft_split2 = nn.Unfold(kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
-            self.project = nn.Linear(token_dim * 3 * 3, embed_dim)
-            ############################
-            
-            self.num_patches = (img_size // (4)) * (img_size // (4))
-            self.attention1 = Token_transformer(dim=in_chans * 7 * 7, in_dim=token_dim, num_heads=1, mlp_ratio=1.0, num_patches=self.num_patches)
-            self.num_patches = (img_size // (4 * 2)) * (img_size // (4 * 2))
-            self.attention2 = Token_transformer(dim=token_dim * 3 * 3, in_dim=token_dim, num_heads=1, mlp_ratio=1.0, num_patches=self.num_patches)
-            self.num_patches = (img_size // (4 * 2 * 2)) * (img_size // (4 * 2 * 2))
-            
-
-        elif img_size == 64:
-            """ SPM """
-            ############################
-            # self.soft_split0 = ShiftedPatchMerging(in_chans, token_dim)
-            # self.soft_split1 = ShiftedPatchMerging(token_dim, token_dim)
-            # self.soft_split2 = ShiftedPatchMerging(token_dim, embed_dim)
-            ############################
-            
-            
-            
-            """ BASE """
-            ############################
             self.soft_split0 = nn.Unfold(kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
             self.soft_split1 = nn.Unfold(kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
             self.soft_split2 = nn.Unfold(kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
-            self.project = nn.Linear(token_dim* 5 * 3 * 3, embed_dim)
-            ############################
             
             self.num_patches = (img_size // (2)) * (img_size // (2))
-            self.attention1 = Token_transformer(dim=in_chans * 5 * 3 * 3, in_dim=token_dim, num_heads=1, mlp_ratio=1.0, num_patches=self.num_patches)
+            self.attention1 = Token_transformer(dim=in_chans * 3 * 3, in_dim=token_dim, num_heads=1, mlp_ratio=1.0, num_patches=self.num_patches, is_LSA=is_LSA)
             self.num_patches = (img_size // (2 * 2)) * (img_size // (2 * 2))
-            self.attention2 = Token_transformer(dim=token_dim * 3 * 3, in_dim=token_dim, num_heads=1, mlp_ratio=1.0, num_patches=self.num_patches)            
+            self.attention2 = Token_transformer(dim=token_dim * 3 * 3, in_dim=token_dim, num_heads=1, mlp_ratio=1.0, num_patches=self.num_patches, is_LSA=is_LSA)            
             self.num_patches = (img_size // (2 * 2 * 2)) * (img_size // (2 * 2 * 2))
 
-        elif img_size == 32:
-            """ SPM """
-            ############################
-            # self.soft_split0 = ShiftedPatchMerging(in_chans, token_dim)
-            # self.soft_split1 = ShiftedPatchMerging(token_dim, embed_dim)
-            ############################
-            
-            """ BASE """
-            ############################
+        else:
             self.soft_split0 = nn.Unfold(kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
             self.soft_split1 = nn.Unfold(kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
-            self.project = nn.Linear(token_dim * 3 * 3, embed_dim)
-            ############################
+            
             self.num_patches = (img_size // (2)) * (img_size // (2))
-            self.attention1 = Token_transformer(dim=token_dim * 3 * 3, in_dim=token_dim, num_heads=1, mlp_ratio=1.0, num_patches=self.num_patches)
+            self.attention1 = Token_transformer(dim=in_chans * 3 * 3, in_dim=token_dim, num_heads=1, mlp_ratio=1.0, num_patches=self.num_patches, is_LSA=is_LSA)
             self.num_patches = (img_size // (2 * 2)) * (img_size // (2 * 2))
             self.attention2 = None    
             
-        self.spm = PatchShifting(2)
-        self.norm = nn.LayerNorm(token_dim * 5 * 3 * 3)
-    
+        self.spt = PatchShifting(2)
+        self.norm = nn.LayerNorm(token_dim * 3 * 3)
+        self.project = nn.Linear(token_dim * 3 * 3, embed_dim)
           # there are 3 sfot split, stride are 4,2,2 seperately
 
     def forward(self, x):
         # step0: soft split
-        """ base """
-        ############################
-        x = self.spm(x)
-        x = self.soft_split0(x).transpose(1, 2)
-        ############################
+        if self.is_SPT:
+            x = self.spt(x)
         
-        """ SPM """
-        ############################
-        # x = self.soft_split0(x)
-        ############################
-
+        x = self.soft_split0(x).transpose(1, 2)
+        
+        
         # iteration1: re-structurization/reconstruction
         x = self.attention1(x)
         B, new_HW, C = x.shape
         x = x.transpose(1,2).reshape(B, C, int(np.sqrt(new_HW)), int(np.sqrt(new_HW)))
         # iteration1: soft split
-        """ base """
-        ############################
+        
         x = self.soft_split1(x).transpose(1, 2)
         if self.attention2 is None:
             x = self.project(x)
             return x
-        ############################
         
-        """ SPM """
-        ############################        
-        # x = self.soft_split1(x)
-        # if self.attention2 is None:
-        #     return x
-        ############################
-
         # iteration2: re-structurization/reconstruction
         x = self.attention2(x)  
         
         B, new_HW, C = x.shape
         x = x.transpose(1, 2).reshape(B, C, int(np.sqrt(new_HW)), int(np.sqrt(new_HW)))
         # iteration2: soft split
-        """ base """
-        ############################
-        x = self.spm(x)
         x = self.soft_split2(x).transpose(1, 2)
         # final tokens
         x = self.project(x)
-        ########################
         
-        """ SPM """
-        ############################
-        # x = self.soft_split2(x)
-        ###########################
-
         return x
 
 class T2T_ViT(nn.Module):
     def __init__(self, img_size=224, in_chans=3, num_classes=1000, embed_dim=256, depth=12,
                  num_heads=4, mlp_ratio=2., qkv_bias=False, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
-                 drop_path_rate=0., norm_layer=nn.LayerNorm, token_dim=64):
+                 drop_path_rate=0., norm_layer=nn.LayerNorm, token_dim=64, is_SPT=False, is_LSA=False):
         super().__init__()
         self.num_classes = num_classes
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
 
         self.tokens_to_token = T2T_module(
-                img_size=img_size, in_chans=in_chans, embed_dim=embed_dim, token_dim=token_dim)
+                img_size=img_size, in_chans=in_chans, embed_dim=embed_dim, token_dim=token_dim, is_SPT=is_SPT, is_LSA=is_LSA)
         num_patches = self.tokens_to_token.num_patches
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
@@ -343,7 +282,7 @@ class T2T_ViT(nn.Module):
         self.blocks = nn.ModuleList([
             Block(
                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer, num_patches=num_patches+1)
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer, num_patches=num_patches+1, is_LSA=is_LSA)
             for i in range(depth)])
         self.norm = norm_layer(embed_dim)
 
@@ -393,46 +332,7 @@ class T2T_ViT(nn.Module):
         x = self.head(x)
         return x
 
-from einops import rearrange, repeat
-from einops.layers.torch import Rearrange
-import math
-
-    
-class ShiftedPatchMerging(nn.Module):
-    def __init__(self, in_dim, dim, merging_size=2, exist_class_t=False):
-        super().__init__()
         
-        self.exist_class_t = exist_class_t
-        
-        self.patch_shifting = PatchShifting(merging_size)
-        
-        patch_dim = (in_dim*5) * (merging_size**2) 
-        self.class_linear = nn.Linear(in_dim, dim)
-    
-        self.merging = nn.Sequential(
-            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = merging_size, p2 = merging_size),
-            nn.LayerNorm(patch_dim),
-            nn.Linear(patch_dim, dim)
-        )
-
-    def forward(self, x):
-        
-        if self.exist_class_t:
-            visual_tokens, class_token = x[:, 1:], x[:, (0,)]
-            reshaped = rearrange(visual_tokens, 'b (h w) d -> b d h w', h=int(math.sqrt(x.size(1))))
-            out_visual = self.patch_shifting(reshaped)
-            out_visual = self.merging(out_visual)
-            out_class = self.class_linear(class_token)
-            out = torch.cat([out_class, out_visual], dim=1)
-        
-        else:
-            out = self.patch_shifting(x)
-            out = self.merging(out)
-    
-        
-        return out
-
-    
 class PatchShifting(nn.Module):
     def __init__(self, patch_size):
         super().__init__()
@@ -479,4 +379,3 @@ class PatchShifting(nn.Module):
         out = x_cat
         
         return out
-    
