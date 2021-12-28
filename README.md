@@ -9,6 +9,7 @@ Recently, the Vision Transformer (ViT), which applied the transformer structure 
 
 <div align="center">
   <img src="SPT.png" width="50%" title="" alt="teaser">
+  **<Shifted Patch Tokenization>
   </img><img src="LSA.png" width="50%" title="" alt="teaser"></img>
   <img src="main.png" width="50%" title="" alt="teaser"></img>
 </div>
