@@ -24,12 +24,12 @@ Recently, the Vision Transformer (ViT), which applied the transformer structure 
 <div align="center">
   <img src="main.png" width="50%" title="" alt="teaser"></img>
 </div>
-
+<!-- 
 ### Small-size datasets classification
 | Model      | FLOPs | CIFAR100 | Tiny-ImageNet |
 |-----------|---------:|--------:|:-----------------:|
 |CaiT |  -    | -   | -|
-|SL-CaiT |  -    | -   | -|
+|SL-CaiT |  -    | -   | -| -->
 
 ## Citation
 
