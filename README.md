@@ -29,6 +29,7 @@ Recently, the Vision Transformer (ViT), which applied the transformer structure 
 | Model      | FLOPs | CIFAR100 | Tiny-ImageNet |
 |-----------|---------:|--------:|:-----------------:|
 |CaiT |  -    | -   | -|
+|SL-CaiT |  -    | -   | -|
 
 ## Citation
 
