@@ -25,6 +25,10 @@ Recently, the Vision Transformer (ViT), which applied the transformer structure 
   <img src="main.png" width="50%" title="" alt="teaser"></img>
 </div>
 
+### Small-size datasets classification
+| Name      | FLOPs | CIFAR100 | Tiny-ImageNet |
+|-----------|---------:|--------:|:-----------------:|
+|CaiT |  -    | -   | 7.93%| -|
 
 ## Citation
 
