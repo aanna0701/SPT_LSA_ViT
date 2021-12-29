@@ -12,9 +12,7 @@ from torch import einsum
 
 from timm.models.layers import trunc_normal_
 import numpy as np
-
-from einops.layers.torch import Rearrange
-import math
+from .SPT import PatchShifting
 
 """
 Take the standard Transformer as T2T Transformer
@@ -331,51 +329,3 @@ class T2T_ViT(nn.Module):
         x = self.forward_features(x)
         x = self.head(x)
         return x
-
-        
-class PatchShifting(nn.Module):
-    def __init__(self, patch_size):
-        super().__init__()
-        self.shift = int(patch_size * (1/2))
-        
-    def forward(self, x):
-     
-        x_pad = torch.nn.functional.pad(x, (self.shift, self.shift, self.shift, self.shift))
-        # if self.is_mean:
-        #     x_pad = x_pad.mean(dim=1, keepdim = True)
-        
-        """ 4 cardinal directions """
-        #############################
-        # x_l2 = x_pad[:, :, self.shift:-self.shift, :-self.shift*2]
-        # x_r2 = x_pad[:, :, self.shift:-self.shift, self.shift*2:]
-        # x_t2 = x_pad[:, :, :-self.shift*2, self.shift:-self.shift]
-        # x_b2 = x_pad[:, :, self.shift*2:, self.shift:-self.shift]
-        # x_cat = torch.cat([x, x_l2, x_r2, x_t2, x_b2], dim=1) 
-        #############################
-        
-        """ 4 diagonal directions """
-        # #############################
-        x_lu = x_pad[:, :, :-self.shift*2, :-self.shift*2]
-        x_ru = x_pad[:, :, :-self.shift*2, self.shift*2:]
-        x_lb = x_pad[:, :, self.shift*2:, :-self.shift*2]
-        x_rb = x_pad[:, :, self.shift*2:, self.shift*2:]
-        x_cat = torch.cat([x, x_lu, x_ru, x_lb, x_rb], dim=1) 
-        # #############################
-        
-        """ 8 cardinal directions """
-        #############################
-        # x_l2 = x_pad[:, :, self.shift:-self.shift, :-self.shift*2]
-        # x_r2 = x_pad[:, :, self.shift:-self.shift, self.shift*2:]
-        # x_t2 = x_pad[:, :, :-self.shift*2, self.shift:-self.shift]
-        # x_b2 = x_pad[:, :, self.shift*2:, self.shift:-self.shift]
-        # x_lu = x_pad[:, :, :-self.shift*2, :-self.shift*2]
-        # x_ru = x_pad[:, :, :-self.shift*2, self.shift*2:]
-        # x_lb = x_pad[:, :, self.shift*2:, :-self.shift*2]
-        # x_rb = x_pad[:, :, self.shift*2:, self.shift*2:]
-        # x_cat = torch.cat([x, x_l2, x_r2, x_t2, x_b2, x_lu, x_ru, x_lb, x_rb], dim=1) 
-        #############################
-        
-        # out = self.out(x_cat)
-        out = x_cat
-        
-        return out

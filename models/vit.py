@@ -3,7 +3,7 @@ from torch import nn, einsum
 from utils.drop_path import DropPath
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
-import math
+from .SPT import ShiftedPatchTokenization
 # helpers
  
 def pair(t):
@@ -28,11 +28,7 @@ class PreNorm(nn.Module):
         self.fn = fn
     def forward(self, x, **kwargs):
         return self.fn(self.norm(x), ** kwargs)
-    def flops(self):
-        flops = 0        
-        flops += self.fn.flops()
-        flops += self.dim * (self.num_tokens+1)        
-        return flops    
+ 
 class FeedForward(nn.Module):
     def __init__(self, dim, num_patches, hidden_dim, dropout = 0.):
         super().__init__()
@@ -49,19 +45,7 @@ class FeedForward(nn.Module):
         )            
     def forward(self, x):
         return self.net(x)
-    
-    def flops(self):
-        flops = 0
-        if not self.is_coord:
-            flops += self.dim * self.hidden_dim * (self.num_patches+1)
-            flops += self.dim * self.hidden_dim * (self.num_patches+1)
-        else:
-            flops += (self.dim+2) * self.hidden_dim * self.num_patches
-            flops += self.dim * self.hidden_dim
-            flops += self.dim * (self.hidden_dim+2) * self.num_patches
-            flops += self.dim * self.hidden_dim
-        
-        return flops
+
 
 class Attention(nn.Module):
     def __init__(self, dim, num_patches, heads = 8, dim_head = 64, dropout = 0., is_LSA=False):
@@ -114,16 +98,7 @@ class Attention(nn.Module):
         else:
             flops += (self.dim+2) * self.inner_dim * 3 * self.num_patches  
             flops += self.dim * self.inner_dim * 3  
-            
-        flops += self.inner_dim * ((self.num_patches+1)**2)
-        flops += self.inner_dim * ((self.num_patches+1)**2)
-        if not self.is_coord:
-            flops += self.inner_dim * self.dim * (self.num_patches+1)
-        else:
-            flops += (self.inner_dim+2) * self.dim * self.num_patches
-            flops += self.inner_dim * self.dim
-        
-        return flops
+
 
 class Transformer(nn.Module):
     def __init__(self, dim, num_patches, depth, heads, dim_head, mlp_dim_ratio, dropout = 0., stochastic_depth=0., is_LSA=False):
@@ -144,14 +119,7 @@ class Transformer(nn.Module):
             x = self.drop_path(ff(x)) + x            
             self.scale[str(i)] = attn.fn.scale
         return x
-    
-    def flops(self):
-        flops = 0        
-        for (attn, ff) in self.layers:       
-            flops += attn.flops()
-            flops += ff.flops()
-        
-        return flops
+
 class ViT(nn.Module):
     def __init__(self, *, img_size, patch_size, num_classes, dim, depth, heads, mlp_dim_ratio, channels = 3, 
                  dim_head = 16, dropout = 0., emb_dropout = 0., stochastic_depth=0.,is_LSA=False, is_SPT=False):
@@ -203,103 +171,4 @@ class ViT(nn.Module):
         
         return self.mlp_head(x[:, 0])
 
-    def flops(self):
-        flops = 0
-        
-        if self.is_base:
-            if self.is_coord:
-                flops_pe = self.num_patches * (self.patch_dim+2) * self.dim
-            else:
-                flops_pe = self.num_patches * self.patch_dim * self.dim 
-        else:
-            flops_pe = self.to_patch_embedding.flops()        
-        flops += flops_pe        
-        flops += self.transformer.flops()           
-        flops += self.dim               # layer norm
-        flops += self.dim * self.num_classes    # linear
-        
-        return flops
 
-class ShiftedPatchTokenization(nn.Module):
-    def __init__(self, in_dim, dim, merging_size=2, exist_class_t=False, is_pe=False):
-        super().__init__()
-        
-        self.exist_class_t = exist_class_t
-        
-        self.patch_shifting = PatchShifting(merging_size)
-        
-        patch_dim = (in_dim*5) * (merging_size**2) 
-        self.class_linear = nn.Linear(in_dim, dim)
-
-        
-        self.is_pe = is_pe
-        
-        self.merging = nn.Sequential(
-            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = merging_size, p2 = merging_size),
-            nn.LayerNorm(patch_dim),
-            nn.Linear(patch_dim, dim)
-        )
-
-    def forward(self, x):
-        
-        if self.exist_class_t:
-            visual_tokens, class_token = x[:, 1:], x[:, (0,)]
-            reshaped = rearrange(visual_tokens, 'b (h w) d -> b d h w', h=int(math.sqrt(x.size(1))))
-            out_visual = self.patch_shifting(reshaped)
-            out_visual = self.merging(out_visual)
-            out_class = self.class_linear(class_token)
-            out = torch.cat([out_class, out_visual], dim=1)
-        
-        else:
-            out = x if self.is_pe else rearrange(x, 'b (h w) d -> b d h w', h=int(math.sqrt(x.size(1))))
-            out = self.patch_shifting(out)
-            out = self.merging(out)    
-        
-        return out
-        
-class PatchShifting(nn.Module):
-    def __init__(self, patch_size):
-        super().__init__()
-        self.shift = int(patch_size * (1/2))
-        
-    def forward(self, x):
-     
-        x_pad = torch.nn.functional.pad(x, (self.shift, self.shift, self.shift, self.shift))
-        # if self.is_mean:
-        #     x_pad = x_pad.mean(dim=1, keepdim = True)
-        
-        """ 4 cardinal directions """
-        #############################
-        # x_l2 = x_pad[:, :, self.shift:-self.shift, :-self.shift*2]
-        # x_r2 = x_pad[:, :, self.shift:-self.shift, self.shift*2:]
-        # x_t2 = x_pad[:, :, :-self.shift*2, self.shift:-self.shift]
-        # x_b2 = x_pad[:, :, self.shift*2:, self.shift:-self.shift]
-        # x_cat = torch.cat([x, x_l2, x_r2, x_t2, x_b2], dim=1) 
-        #############################
-        
-        """ 4 diagonal directions """
-        # #############################
-        x_lu = x_pad[:, :, :-self.shift*2, :-self.shift*2]
-        x_ru = x_pad[:, :, :-self.shift*2, self.shift*2:]
-        x_lb = x_pad[:, :, self.shift*2:, :-self.shift*2]
-        x_rb = x_pad[:, :, self.shift*2:, self.shift*2:]
-        x_cat = torch.cat([x, x_lu, x_ru, x_lb, x_rb], dim=1) 
-        # #############################
-        
-        """ 8 cardinal directions """
-        #############################
-        # x_l2 = x_pad[:, :, self.shift:-self.shift, :-self.shift*2]
-        # x_r2 = x_pad[:, :, self.shift:-self.shift, self.shift*2:]
-        # x_t2 = x_pad[:, :, :-self.shift*2, self.shift:-self.shift]
-        # x_b2 = x_pad[:, :, self.shift*2:, self.shift:-self.shift]
-        # x_lu = x_pad[:, :, :-self.shift*2, :-self.shift*2]
-        # x_ru = x_pad[:, :, :-self.shift*2, self.shift*2:]
-        # x_lb = x_pad[:, :, self.shift*2:, :-self.shift*2]
-        # x_rb = x_pad[:, :, self.shift*2:, self.shift*2:]
-        # x_cat = torch.cat([x, x_l2, x_r2, x_t2, x_b2, x_lu, x_ru, x_lb, x_rb], dim=1) 
-        #############################
-        
-        # out = self.out(x_cat)
-        out = x_cat
-        
-        return out

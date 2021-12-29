@@ -191,16 +191,7 @@ def main(args):
                 transforms.RandomHorizontalFlip(),
                 SVHNPolicy()
             ]
-        
-            
-        elif args.dataset == 'IMNET':
-            print("ImageNet Policy")    
-            from utils.autoaug import ImageNetPolicy
-            augmentations += [
-                transforms.RandomResizedCrop(224),
-                ImageNetPolicy()
-            ]
-            
+                    
         else:
             from utils.autoaug import ImageNetPolicy
             augmentations += [                

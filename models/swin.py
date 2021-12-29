@@ -12,6 +12,7 @@ from timm.models.layers import to_2tuple, trunc_normal_
 from utils.drop_path import DropPath
 import torch
 from einops.layers.torch import Rearrange
+from .SPT import ShiftedPatchTokenization
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
         super().__init__()
@@ -74,7 +75,7 @@ class WindowAttention(nn.Module):
         proj_drop (float, optional): Dropout ratio of output. Default: 0.0
     """
 
-    def __init__(self, dim, window_size, num_heads, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0., is_base=False):
+    def __init__(self, dim, window_size, num_heads, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0., is_LSA=False):
 
         super().__init__()
         self.dim = dim
@@ -82,15 +83,12 @@ class WindowAttention(nn.Module):
         self.num_heads = num_heads
         head_dim = dim // num_heads
         self.scale = qk_scale or head_dim ** -0.5
-        self.is_base = is_base
-        if not is_base:
-            """ LMSA """
-            #########################
+        self.is_LSA = is_LSA
+        if is_LSA:
             self.scale = nn.Parameter(self.scale*torch.ones(self.num_heads))
             self.mask = torch.eye((window_size[0]**2), (window_size[0]**2))
             self.mask = torch.nonzero((self.mask == 1), as_tuple=False)
             self.inf = float('-inf')
-            #########################
 
         # define a parameter table of relative position bias
         self.relative_position_bias_table = nn.Parameter(
@@ -128,16 +126,13 @@ class WindowAttention(nn.Module):
         q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
 
 
-        if self.is_base:
-            #########################
+        if not self.is_LSA:
             q = q * self.scale
-            #########################
         
         else:
-            #########################
             scale = self.scale
             q = torch.mul(q, scale.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).expand((B_, self.num_heads, 1, 1)))
-            #########################
+
         
         attn = (q @ k.transpose(-2, -1))
 
@@ -150,18 +145,14 @@ class WindowAttention(nn.Module):
             nW = mask.shape[0]
             attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
             attn = attn.view(-1, self.num_heads, N, N)
-            """ LMSA """
-            if not self.is_base:
-                #########################
+
+            if self.is_LSA:
                 attn[:, :, self.mask[:, 0], self.mask[:, 1]] = self.inf
-                #########################
             attn = self.softmax(attn)
+            
         else:
-            """ LMSA """
-            if not self.is_base:
-                #########################
+            if self.is_LSA:
                 attn[:, :, self.mask[:, 0], self.mask[:, 1]] = self.inf
-                #########################
             attn = self.softmax(attn)
 
         attn = self.attn_drop(attn)
@@ -174,19 +165,6 @@ class WindowAttention(nn.Module):
 
     def extra_repr(self) -> str:
         return f'dim={self.dim}, window_size={self.window_size}, num_heads={self.num_heads}'
-
-    def flops(self, N):
-        # calculate flops for 1 window with token length of N
-        flops = 0
-        # qkv = self.qkv(x)
-        flops += N * self.dim * 3 * self.dim
-        # attn = (q @ k.transpose(-2, -1))
-        flops += self.num_heads * N * (self.dim // self.num_heads) * N
-        #  x = (attn @ v)
-        flops += self.num_heads * N * N * (self.dim // self.num_heads)
-        # x = self.proj(x)
-        flops += N * self.dim * self.dim
-        return flops
 
 
 class SwinTransformerBlock(nn.Module):
@@ -209,7 +187,7 @@ class SwinTransformerBlock(nn.Module):
 
     def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
-                 act_layer=nn.GELU, norm_layer=nn.LayerNorm, is_base=False):
+                 act_layer=nn.GELU, norm_layer=nn.LayerNorm, is_LSA=False):
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution
@@ -226,7 +204,7 @@ class SwinTransformerBlock(nn.Module):
         self.norm1 = norm_layer(dim)
         self.attn = WindowAttention(
             dim, window_size=to_2tuple(self.window_size), num_heads=num_heads,
-            qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, is_base=is_base)
+            qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, is_LSA=is_LSA)
 
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
@@ -304,19 +282,6 @@ class SwinTransformerBlock(nn.Module):
         return f"dim={self.dim}, input_resolution={self.input_resolution}, num_heads={self.num_heads}, " \
                f"window_size={self.window_size}, shift_size={self.shift_size}, mlp_ratio={self.mlp_ratio}"
 
-    def flops(self):
-        flops = 0
-        H, W = self.input_resolution
-        # norm1
-        flops += self.dim * H * W
-        # W-MSA/SW-MSA
-        nW = H * W / self.window_size / self.window_size
-        flops += nW * self.attn.flops(self.window_size * self.window_size)
-        # mlp
-        flops += 2 * H * W * self.dim * self.dim * self.mlp_ratio
-        # norm2
-        flops += self.dim * H * W
-        return flops
 
 
 class PatchMerging(nn.Module):
@@ -389,7 +354,7 @@ class BasicLayer(nn.Module):
     def __init__(self, dim, input_resolution, depth, num_heads, window_size, 
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=False, use_checkpoint=False,
-                 is_base=True, is_coord=True):
+                 is_LSA=False, is_SPT=False):
 
         super().__init__()
         self.dim = dim
@@ -407,16 +372,15 @@ class BasicLayer(nn.Module):
                                  qkv_bias=qkv_bias, qk_scale=qk_scale,
                                  drop=drop, attn_drop=attn_drop,
                                  drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-                                 norm_layer=norm_layer, is_base=is_base)
+                                 norm_layer=norm_layer, is_LSA=is_LSA)
             for i in range(depth)])
 
         # patch merging layer
         if downsample:
-            if is_base:
+            if not is_SPT:
                 self.downsample = PatchMerging(input_resolution, dim=dim, norm_layer=norm_layer)
             else:
-                self.downsample = STT(img_size=input_resolution[0], patch_size=2, in_dim=dim, embed_dim=dim, 
-                                      type='Pool', heads=16, depth=1, init_eps=0, is_LSA=True, merging_size=2, n_trans=4)
+                self.downsample = ShiftedPatchTokenization(dim, dim*2, 2)
                     
         else:
             self.downsample = None
@@ -439,13 +403,6 @@ class BasicLayer(nn.Module):
     def extra_repr(self) -> str:
         return f"dim={self.dim}, input_resolution={self.input_resolution}, depth={self.depth}"
 
-    def flops(self):
-        flops = 0
-        for blk in self.blocks:
-            flops += blk.flops()
-        if self.downsample is not None:
-            flops += self.downsample.flops()
-        return flops
 
 
 class PatchEmbed(nn.Module):
@@ -486,14 +443,6 @@ class PatchEmbed(nn.Module):
             x = self.norm(x)
         return x
 
-    def flops(self):
-        Ho, Wo = self.patches_resolution
-        flops = Ho * Wo * self.embed_dim * self.in_chans * (self.patch_size[0] * self.patch_size[1])
-        if self.norm is not None:
-            flops += Ho * Wo * self.embed_dim
-        return flops
-
-
 class SwinTransformer(nn.Module):
     r""" Swin Transformer
         A PyTorch impl of : `Swin Transformer: Hierarchical Vision Transformer using Shifted Windows`  -
@@ -523,49 +472,33 @@ class SwinTransformer(nn.Module):
                  embed_dim=96, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24],
                  window_size=7, mlp_ratio=4., qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
-                 norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
-                 use_checkpoint=False, is_base=True, is_s_pool=True, 
-                 pe_dim=128, is_coord=False, is_LSA=False,
-                 eps=0., merging_size=2, n_trans=4, 
-                 STT_head=16, STT_depth=1, is_rpe=False, is_ape=False
-                 ,**kwargs):
+                 norm_layer=nn.LayerNorm, patch_norm=True,
+                 use_checkpoint=False, is_LSA=False, is_SPT=False,
+                 **kwargs):
         super().__init__()
            
 
         self.num_classes = num_classes
         self.num_layers = len(depths)
         self.embed_dim = embed_dim
-        self.is_ape = is_ape
         self.patch_norm = patch_norm
         self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
         self.mlp_ratio = mlp_ratio
-        self.is_base = is_base
-        self.is_coord = is_coord
         
         """ Base """
-        if is_base:
-            if not self.is_coord:
-                self.patch_embed = PatchEmbed(
-                    img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim,
-                    norm_layer=norm_layer if self.patch_norm else None)     
-                self.img_resolution = self.patch_embed.patches_resolution
-            
-            else:
-               self.patch_embed = self.to_patch_embedding = nn.Sequential(
-                    Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_size, p2 = patch_size),
-                    CoordLinear(3*(patch_size**2), embed_dim, exist_cls_token=False)
-                )   
-               self.img_resolution = (img_size//patch_size, img_size//patch_size)
+        if not is_SPT:
+            self.patch_embed = PatchEmbed(
+                img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim,
+                norm_layer=norm_layer if self.patch_norm else None)     
+            self.img_resolution = self.patch_embed.patches_resolution
+
         else:
-            self.patch_embed = STT(img_size=img_size, patch_size=patch_size, in_dim=pe_dim, embed_dim=embed_dim, 
-                                   type='PE', heads=STT_head, depth=STT_depth, init_eps=eps, is_LSA=True, 
-                                   merging_size=merging_size, n_trans=n_trans) 
+            self.patch_embed = ShiftedPatchTokenization(3, embed_dim, patch_size, is_pe=True)
             self.img_resolution = (img_size//patch_size, img_size//patch_size)  
         
         # absolute position embedding
-        if self.is_ape:
-            self.absolute_pos_embed = nn.Parameter(torch.zeros(1, self.img_resolution[0]**2, embed_dim))
-            trunc_normal_(self.absolute_pos_embed, std=.02)
+        self.absolute_pos_embed = nn.Parameter(torch.zeros(1, self.img_resolution[0]**2, embed_dim))
+        trunc_normal_(self.absolute_pos_embed, std=.02)
 
         self.pos_drop = nn.Dropout(p=drop_rate)
 
@@ -590,7 +523,7 @@ class SwinTransformer(nn.Module):
                                qkv_bias=qkv_bias, qk_scale=qk_scale,
                                drop=drop_rate, attn_drop=attn_drop_rate,
                                drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
-                               norm_layer=norm_layer, is_base=is_base, 
+                               norm_layer=norm_layer, is_LSA=is_LSA, is_SPT=is_SPT,
                                downsample=True if (i_layer < self.num_layers - 1) else False,
                                use_checkpoint=use_checkpoint)
             self.layers.append(layer)
@@ -602,11 +535,6 @@ class SwinTransformer(nn.Module):
         self.avgpool = nn.AdaptiveAvgPool1d(1)
         self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
 
-        # self.n_trans = n_trans
-        # self.is_learn = is_learn
-
-        # self.theta = [0] * (self.n_tokenize)
-        # self.scale = [0] * (self.n_tokenize)  
     
     def forward_features(self, x):
     
@@ -614,8 +542,7 @@ class SwinTransformer(nn.Module):
         
         x = self.patch_embed(x)   
         
-        if self.is_ape:
-            x = x + self.absolute_pos_embed
+        x = x + self.absolute_pos_embed
         x = self.pos_drop(x)
         
         for i, layer in enumerate(self.layers):
@@ -633,19 +560,4 @@ class SwinTransformer(nn.Module):
         x = self.head(x)
         return x
 
-    def flops(self):
-        flops = 0
-        if self.is_base:
-            if self.is_coord:
-                flops += self.num_patches * (self.patch_dim+2) * self.dim
-            else:
-                flops += self.patch_embed.flops() 
-        else:
-            flops += self.patch_embed.flops()
-        flops += self.patch_embed.flops()
-        for i, layer in enumerate(self.layers):
-            flops += layer.flops()
-        flops += self.num_features * self.img_resolution[0] * self.img_resolution[1] # layer norm
-        flops += self.num_features * self.num_classes   # mlp head
-        return flops
     
