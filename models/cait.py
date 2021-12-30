@@ -245,20 +245,7 @@ class CaiT(nn.Module):
 
         return self.mlp_head(x[:, 0])
 
-    def flops(self):
-        flops = 0
-        
-        # flops_pe = self.pe_flops if self.is_base else self.to_patch_embedding.flops()
-        # flops += flops_pe
-        
-        # flops += self.patch_transformer.flops()   
-        # flops += self.cls_transformer.flops()   
-        
-        # flops += self.dim               # layer norm
-        # flops += self.dim * self.num_classes    # linear
-        
-        return flops
-   
+
 
 
     
