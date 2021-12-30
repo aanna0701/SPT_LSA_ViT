@@ -38,7 +38,7 @@ Recently, the Vision Transformer (ViT), which applied the transformer structure 
 #### Accuracy-Throughput Graph
 
 <!-- <div align="center"> -->
-  <img src="main.png" width="75%" title="" alt="teaser"></img>
+  <img src="main.png" width="50%" title="" alt="teaser"></img>
 <!-- </div> -->
 
 ## Citation
