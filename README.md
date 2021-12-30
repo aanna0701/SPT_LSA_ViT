@@ -24,8 +24,16 @@ Recently, the Vision Transformer (ViT), which applied the transformer structure 
 #### Small-Size Dataset Classification
 | Model      | FLOPs | CIFAR10 | CIFAR100 | SVHN |Tiny-ImageNet |
 |-----------|---------:|--------:|:-----------------:|:-----------------:|:-----------------:|
+|ViT |  -    | -   | -|| -|| -|
+|SL-ViT |  -    | -   | -|| -|| -|
+|T2T |  -    | -   | -|| -|| -|
+|SL-T2T |  -    | -   | -|| -|| -|
 |CaiT |  -    | -   | -|| -|| -|
 |SL-CaiT |  -    | -   | -|| -|| -|
+|PiT |  -    | -   | -|| -|| -|
+|SL-PiT |  -    | -   | -|| -|| -|
+|Swin |  -    | -   | -|| -|| -|
+|SL-Swin |  -    | -   | -|| -|| -|
 
 #### Accuracy-Throughput Graph
 
