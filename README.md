@@ -10,15 +10,15 @@ Recently, the Vision Transformer (ViT), which applied the transformer structure 
 ### Method
 #### Shifted Patch Tokenization
 
-<div align="center">
+<!-- <div align="center"> -->
   <img src="SPT.png" width="50%" title="" alt="teaser">
-</div>
+<!-- </div> -->
 
 #### Locality Self-Attention
 
-<div align="center">
+<!-- <div align="center"> -->
   </img><img src="LSA.png" width="50%" title="" alt="teaser"></img>
-  </div>
+<!--   </div> -->
 
 ### Model Performance
 #### Small-Size Dataset Classification
@@ -37,9 +37,9 @@ Recently, the Vision Transformer (ViT), which applied the transformer structure 
 
 #### Accuracy-Throughput Graph
 
-<div align="center">
+<!-- <div align="center"> -->
   <img src="main.png" width="50%" title="" alt="teaser"></img>
-</div>
+<!-- </div> -->
 
 ## Citation
 
