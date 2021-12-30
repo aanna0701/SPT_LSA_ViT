@@ -41,6 +41,16 @@ Recently, the Vision Transformer (ViT), which applied the transformer structure 
   <img src="main.png" width="50%" title="" alt="teaser"></img>
 <!-- </div> -->
 
+## How to use
+### Pure-VIT
+```bash
+python main.py --model vit 
+```
+### SL-Swin
+```bash
+python main.py --model swin --is_LSA --is_SPT 
+```
+
 ## Citation
 
 ```
