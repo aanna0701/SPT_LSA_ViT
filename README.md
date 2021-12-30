@@ -19,17 +19,16 @@ Recently, the Vision Transformer (ViT), which applied the transformer structure 
   </img><img src="LSA.png" width="50%" title="" alt="teaser"></img>
   </div>
 
-### Performance-Cost graph
+### Model Performance
 
 <div align="center">
   <img src="main.png" width="50%" title="" alt="teaser"></img>
 </div>
-<!-- 
-### Small-size datasets classification
-| Model      | FLOPs | CIFAR100 | Tiny-ImageNet |
-|-----------|---------:|--------:|:-----------------:|
-|CaiT |  -    | -   | -|
-|SL-CaiT |  -    | -   | -| -->
+
+| Model      | FLOPs | CIFAR10 | CIFAR100 | SVHN |Tiny-ImageNet |
+|-----------|---------:|--------:|:-----------------:|:-----------------:|:-----------------:|
+|CaiT |  -    | -   | -|| -|| -|
+|SL-CaiT |  -    | -   | -|| -|| -|
 
 ## Citation
 
