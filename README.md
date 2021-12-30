@@ -21,17 +21,17 @@ Recently, the Vision Transformer (ViT), which applied the transformer structure 
   </div>
 
 ### Model Performance
-#### Accuracy-Throughput Graph
-
-<div align="center">
-  <img src="main.png" width="50%" title="" alt="teaser"></img>
-</div>
-
 #### Small-Size Dataset Classification
 | Model      | FLOPs | CIFAR10 | CIFAR100 | SVHN |Tiny-ImageNet |
 |-----------|---------:|--------:|:-----------------:|:-----------------:|:-----------------:|
 |CaiT |  -    | -   | -|| -|| -|
 |SL-CaiT |  -    | -   | -|| -|| -|
+
+#### Accuracy-Throughput Graph
+
+<div align="center">
+  <img src="main.png" width="50%" title="" alt="teaser"></img>
+</div>
 
 ## Citation
 
