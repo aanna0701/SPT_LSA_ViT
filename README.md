@@ -42,7 +42,7 @@ Recently, the Vision Transformer (ViT), which applied the transformer structure 
 <!-- </div> -->
 
 ## How to train models
-### Pure-VIT
+### Pure-ViT
 ```bash
 python main.py --model vit 
 ```
