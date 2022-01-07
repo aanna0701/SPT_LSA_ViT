@@ -54,12 +54,10 @@ python main.py --model swin --is_LSA --is_SPT
 ## Citation
 
 ```
-@misc{lee2021vision,
-      title={Vision Transformer for Small-Size Datasets}, 
-      author={Seung Hoon Lee and Seunghyun Lee and Byung Cheol Song},
-      year={2021},
-      eprint={2112.13492},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV}
+@article{lee2021vision,
+  title={Vision Transformer for Small-Size Datasets},
+  author={Lee, Seung Hoon and Lee, Seunghyun and Song, Byung Cheol},
+  journal={arXiv preprint arXiv:2112.13492},
+  year={2021}
 }
 ```
