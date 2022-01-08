@@ -1,4 +1,4 @@
-## Vision Transformer of Small-Size Datasets
+## Vision Transformer for Small-Size Datasets
 
 **Seung Hoon Lee and Seunghyun Lee and Byung Cheol Song** | [Paper](https://arxiv.org/abs/2112.13492)
 
