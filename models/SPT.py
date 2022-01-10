@@ -13,9 +13,9 @@ class ShiftedPatchTokenization(nn.Module):
         self.patch_shifting = PatchShifting(merging_size)
         
         patch_dim = (in_dim*5) * (merging_size**2) 
-        self.class_linear = nn.Linear(in_dim, dim)
+        if exist_class_t:
+            self.class_linear = nn.Linear(in_dim, dim)
 
-        
         self.is_pe = is_pe
         
         self.merging = nn.Sequential(
