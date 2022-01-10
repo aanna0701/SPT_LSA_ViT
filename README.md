@@ -35,7 +35,7 @@ Recently, the Vision Transformer (ViT), which applied the transformer structure 
 |Swin   | 242.3  | 94.46  | 76.87 | 97.72 | 60.87 |
 |SL-Swin| 284.9  | 95.93  | 79.99 | 97.92 | 64.95 |
 
-#### Accuracy-Throughput Graph
+#### Accuracy-Throughput Graph on Tiny-ImageNet
 
 <!-- <div align="center"> -->
   <img src="main.png" width="50%" title="" alt="teaser"></img>
