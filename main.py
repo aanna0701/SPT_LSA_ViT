@@ -168,6 +168,13 @@ def main(args):
     '''
     augmentations = []
     
+        augmentations = []
+    
+    augmentations += [                
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomCrop(data_info['img_size'], padding=4)
+            ]
+    
     if args.aa == True:
         print(Fore.YELLOW+'*'*80)
         logger.debug('Autoaugmentation used')      
@@ -175,10 +182,7 @@ def main(args):
         if 'CIFAR' in args.dataset:
             print("CIFAR Policy")
             from utils.autoaug import CIFAR10Policy
-            augmentations += [
-                
-                transforms.RandomCrop(data_info['img_size'], padding=4),
-                transforms.RandomHorizontalFlip(),
+            augmentations += [   
                 CIFAR10Policy()
             ]
             
@@ -186,22 +190,20 @@ def main(args):
             print("SVHN Policy")    
             from utils.autoaug import SVHNPolicy
             augmentations += [
-                
-              transforms.RandomCrop(data_info['img_size'], padding=4),
-                transforms.RandomHorizontalFlip(),
                 SVHNPolicy()
             ]
                     
         else:
             from utils.autoaug import ImageNetPolicy
             augmentations += [                
-              transforms.RandomCrop(data_info['img_size'], padding=4),
-                transforms.RandomHorizontalFlip(),
                 ImageNetPolicy()
             ]
             
         print('*'*80 + Style.RESET_ALL)
-        
+    
+    augmentations += [                
+            transforms.ToTensor(),
+            *normalize]  
 
     if args.re > 0:
         from utils.random_erasing import RandomErasing
@@ -209,18 +211,9 @@ def main(args):
         logger.debug(f'Random erasing({args.re}) used ')
         print('*'*80+Style.RESET_ALL)    
         
-        
-        augmentations += [                
-            transforms.ToTensor(),
-            *normalize,
-            RandomErasing(probability = args.re, sh = args.re_sh, r1 = args.re_r1, mean=data_info['stat'][0])]
-    
-    else:
-        augmentations += [                
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomCrop(data_info['img_size'], padding=4),
-            transforms.ToTensor(),
-            *normalize]
+        augmentations += [     
+            RandomErasing(probability = args.re, sh = args.re_sh, r1 = args.re_r1, mean=data_info['stat'][0])
+            ]
     
     
     augmentations = transforms.Compose(augmentations)
