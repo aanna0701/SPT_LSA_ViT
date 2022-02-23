@@ -168,8 +168,6 @@ def main(args):
     '''
     augmentations = []
     
-        augmentations = []
-    
     augmentations += [                
             transforms.RandomHorizontalFlip(),
             transforms.RandomCrop(data_info['img_size'], padding=4)
